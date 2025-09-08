@@ -1,0 +1,332 @@
+intent-centric-simulator/
+├── README.md                 # Explains the project and how to run it
+└── simulator/
+    ├── __main__.py           # Main entry point to run the simulation
+    ├── intents.py            # Defines the different types of user intents
+    ├── solver.py             # The core logic for the "Solver" agent
+    └── state.py              # Manages the simulation's state (ledger, mempool)
+README.md
+# Intent-Centric Architecture Simulator
+
+This project is a Python-based simulator for an intent-centric blockchain architecture, inspired by systems like Anoma. It provides a conceptual prototype for how users can declare their desired outcomes ("intents") and have sophisticated off-chain actors ("solvers") find the best way to achieve them.
+
+## Core Concepts
+
+* **Intent**: A user's declarative statement of a desired end state (e.g., "I want to have at least 3,000 USDC and no longer have 1 WETH").
+* **Solver**: An agent that monitors a mempool of intents and finds optimal ways to fulfill them, such as matching users, routing through DEXs, or batching transactions.
+* **Atomic Settlement**: A solver's proposed solution is executed as a single, all-or-nothing transaction. If any part fails, the whole thing reverts.
+
+## Features
+
+This simulator models three primary use cases:
+
+1.  **Intent-Centric DEX**: Solvers find the best execution path for a trade, whether it's a direct peer-to-peer match or routing through a simulated AMM.
+2.  **Cross-Domain NFT Bartering**: Users can specify complex conditions for trading an NFT, like accepting a fixed price OR a trade for another specific NFT.
+3.  **Private, Gasless Transactions**: Users can pay for transaction fees using the tokens they are transferring, without needing the chain's native gas token.
+
+## How to Run
+
+1.  Navigate to the `intent-centric-simulator/` directory.
+2.  Run the simulator from your terminal:
+
+    ```bash
+    python simulator
+    ```
+
+This will execute the `__main__.py` file and run the pre-defined simulation scenario, printing the step-by-step logic to the console.
+simulator/state.py
+# simulator/state.py
+
+"""
+Manages the simulation's shared state: the ledger and the mempool.
+"""
+
+# A simple dictionary to act as our blockchain ledger.
+# It tracks the assets (tokens and NFTs) owned by each user.
+LEDGER = {
+    "alice": {"WETH": 1.0, "USDC": 100.0, "CryptoPunk#5678": 1},
+    "bob": {"WETH": 5.0, "USDC": 10000.0, "BoredApe#1234": 1},
+    "carol": {"USDC": 500.0},
+    "solver_account": {"ETH": 10.0, "USDC": 0}, # Solver needs native ETH for gas
+}
+
+# A simple list to act as the mempool where users publish their intents.
+MEMPOOL = []
+
+# --- Simulated External Systems ---
+# These represent external DeFi protocols or oracles the solver can query.
+
+def get_uniswap_price():
+    """Simulates getting the current WETH/USDC price from a Uniswap pool."""
+    return 3050.0 # Returns 3050 USDC per 1 WETH
+
+def get_gas_fee_in_eth():
+    """Simulates the current gas fee for a standard transaction."""
+    return 0.01 # ETH
+
+def print_ledger_state(title="Ledger State"):
+    """A helper function to print the current ledger balances."""
+    print(f"\n--- {title} ---")
+    for user, assets in LEDGER.items():
+        print(f"  - {user.capitalize()}: {assets}")
+    print("---------------------\n")
+simulator/intents.py
+# simulator/intents.py
+
+"""
+Defines the different classes for user intents.
+Intents are declarative goals that users submit to the mempool.
+"""
+
+from dataclasses import dataclass, field
+from typing import List, Dict, Any
+
+@dataclass
+class DexIntent:
+    """Intent: Swap one token for another."""
+    user: str
+    sell_token: str
+    sell_amount: float
+    buy_token: str
+    min_buy_amount: float
+    status: str = "pending" # pending, fulfilled, expired
+
+@dataclass
+class NftBarterIntent:
+    """Intent: Offer an NFT and accept one of several possible outcomes."""
+    user: str
+    offer_nft: str
+    # A list of valid settlement conditions.
+    # Example: [{'type': 'price', 'token': 'WETH', 'amount': 50.0},
+    #           {'type': 'swap', 'nft': 'BoredApe#1234', 'and_token': 'WETH', 'amount': 5.0}]
+    acceptance_conditions: List[Dict[str, Any]]
+    status: str = "pending"
+
+@dataclass
+class GaslessTransferIntent:
+    """Intent: Send tokens and pay the fee from the transfer amount."""
+    user: str
+    send_token: str
+    send_amount: float
+    recipient: str
+    max_fee_in_token: float
+    status: str = "pending"
+simulator/solver.py
+# simulator/solver.py
+
+"""
+The core logic of the Solver.
+The Solver scans the mempool for intents and finds optimal solutions.
+"""
+
+from intents import DexIntent, NftBarterIntent, GaslessTransferIntent
+from state import LEDGER, get_uniswap_price, get_gas_fee_in_eth
+
+def run_solver(mempool):
+    """
+    Main solver function that iterates through intents and tries to find solutions.
+    In a real system, this would be a continuous loop.
+    """
+    print("🤖 Solver is now scanning the mempool for intents...")
+    
+    # In a real system, a solver would be more strategic. Here we just loop once.
+    for intent in mempool:
+        if intent.status != "pending":
+            continue
+
+        if isinstance(intent, DexIntent):
+            solve_dex_intent(intent, mempool)
+        
+        elif isinstance(intent, NftBarterIntent):
+            solve_nft_barter_intent(intent, mempool)
+            
+        elif isinstance(intent, GaslessTransferIntent):
+            solve_gasless_transfer(intent)
+
+def solve_dex_intent(intent, mempool):
+    """Solver logic for decentralized exchange intents."""
+    print(f"\nAnalyzing DEX Intent from {intent.user.capitalize()}: Sell {intent.sell_amount} {intent.sell_token} for >{intent.min_buy_amount} {intent.buy_token}")
+
+    # Strategy 1: Coincidence of Wants (Peer-to-Peer Match)
+    for other_intent in mempool:
+        if isinstance(other_intent, DexIntent) and other_intent.user != intent.user:
+            # Check for a perfect opposite intent
+            if (other_intent.sell_token == intent.buy_token and 
+                other_intent.buy_token == intent.sell_token and
+                other_intent.min_buy_amount <= intent.sell_amount and
+                other_intent.sell_amount >= intent.min_buy_amount):
+                print(f"  => ✅ Found a direct match with {other_intent.user.capitalize()}!")
+                settle_p2p_swap(intent, other_intent)
+                return # Stop after finding a solution
+
+    # Strategy 2: Route through an Automated Market Maker (AMM)
+    uniswap_price = get_uniswap_price()
+    amount_out = intent.sell_amount * uniswap_price
+    print(f"  => No direct match found. Checking Uniswap price: 1 WETH = {uniswap_price} USDC")
+    
+    if amount_out >= intent.min_buy_amount:
+        print("  => ✅ Uniswap route is profitable! Settling transaction...")
+        settle_amm_swap(intent, amount_out)
+        return
+
+def solve_nft_barter_intent(intent, mempool):
+    """Solver logic for complex NFT bartering."""
+    print(f"\nAnalyzing NFT Barter Intent from {intent.user.capitalize()}: Offering {intent.offer_nft}")
+    
+    # The solver iterates through the user's acceptable conditions
+    for condition in intent.acceptance_conditions:
+        if condition['type'] == 'swap' and condition['nft'] in LEDGER.get('bob', {}):
+             print(f"  => ✅ Found a counterparty! Bob owns {condition['nft']} and might be willing to trade.")
+             settle_nft_swap(intent, 'bob', condition)
+             return
+
+def solve_gasless_transfer(intent):
+    """Solver logic for gasless (or fee-from-token) transfers."""
+    print(f"\nAnalyzing Gasless Intent from {intent.user.capitalize()}: Send {intent.send_amount} {intent.send_token}")
+    
+    gas_fee_eth = get_gas_fee_in_eth()
+    # Simulate getting the price of ETH in the transfer token (e.g., USDC)
+    eth_price_in_usdc = get_uniswap_price() 
+    gas_fee_in_usdc = gas_fee_eth * eth_price_in_usdc
+
+    print(f"  => Calculated gas fee: {gas_fee_eth} ETH (approx. {gas_fee_in_usdc:.2f} USDC)")
+    
+    if intent.max_fee_in_token >= gas_fee_in_usdc:
+        print("  => ✅ User's max fee is sufficient. Solver will pay gas and get reimbursed.")
+        settle_gasless_tx(intent, gas_fee_in_usdc)
+        return
+
+# --- Atomic Settlement Functions ---
+# These functions modify the ledger state. In a real blockchain,
+# this entire block of logic would need to execute atomically.
+
+def settle_p2p_swap(intent1, intent2):
+    user1, user2 = intent1.user, intent2.user
+    print(f"  **Settling P2P Swap between {user1.capitalize()} and {user2.capitalize()}**")
+    
+    # Update balances
+    LEDGER[user1][intent1.sell_token] -= intent1.sell_amount
+    LEDGER[user1][intent1.buy_token] += intent2.sell_amount
+    
+    LEDGER[user2][intent2.sell_token] -= intent2.sell_amount
+    LEDGER[user2][intent2.buy_token] += intent1.sell_amount
+    
+    # Mark intents as fulfilled
+    intent1.status = "fulfilled"
+    intent2.status = "fulfilled"
+
+def settle_amm_swap(intent, amount_out):
+    user = intent.user
+    print(f"  **Settling AMM Swap for {user.capitalize()}**")
+
+    LEDGER[user][intent.sell_token] -= intent.sell_amount
+    LEDGER[user][intent.buy_token] += amount_out
+    intent.status = "fulfilled"
+    
+def settle_nft_swap(intent, counterparty, condition):
+    user = intent.user
+    print(f"  **Settling NFT Swap between {user.capitalize()} and {counterparty.capitalize()}**")
+
+    # User gives NFT and gets items from condition
+    LEDGER[user][intent.offer_nft] -= 1
+    LEDGER[counterparty][condition['nft']] -= 1
+    LEDGER[counterparty][intent.offer_nft] = LEDGER[counterparty].get(intent.offer_nft, 0) + 1
+    LEDGER[user][condition['nft']] = LEDGER[user].get(condition['nft'], 0) + 1
+    
+    intent.status = "fulfilled"
+    
+def settle_gasless_tx(intent, fee_in_token):
+    user = intent.user
+    recipient = intent.recipient
+    solver = "solver_account"
+    
+    print(f"  **Settling Gasless TX for {user.capitalize()}**")
+
+    # Solver pays the gas in native ETH
+    LEDGER[solver]['ETH'] -= get_gas_fee_in_eth()
+
+    # User's token balance is debited
+    LEDGER[user][intent.send_token] -= intent.send_amount
+    
+    # Recipient gets the amount minus the fee
+    recipient_gets = intent.send_amount - intent.max_fee_in_token
+    LEDGER[recipient][intent.send_token] += recipient_gets
+    
+    # Solver is reimbursed with the fee from the transfer token
+    LEDGER[solver][intent.send_token] += intent.max_fee_in_token
+    
+    intent.status = "fulfilled"
+simulator/__main__.py
+# simulator/__main__.py
+
+"""
+Main entry point for the Intent-Centric Simulator.
+
+This script sets up an initial state, defines several user intents,
+adds them to the mempool, and then runs the solver to process them.
+"""
+
+from state import MEMPOOL, print_ledger_state
+from intents import DexIntent, NftBarterIntent, GaslessTransferIntent
+from solver import run_solver
+
+def main():
+    """Sets up and runs the simulation scenario."""
+    
+    print("🚀 Starting Intent-Centric Architecture Simulation...")
+    print_ledger_state("Initial Ledger State")
+    
+    # --- 1. Users create and publish their intents ---
+    print("--- Users are publishing intents to the mempool ---")
+
+    # Use Case 1: Intent-Centric DEX
+    # Alice wants to sell 1 WETH for at least 3000 USDC.
+    intent1 = DexIntent(
+        user="alice",
+        sell_token="WETH",
+        sell_amount=1.0,
+        buy_token="USDC",
+        min_buy_amount=3000.0
+    )
+    MEMPOOL.append(intent1)
+    print("  - Alice published a DEX intent.")
+    
+    # Use Case 2: Cross-Domain NFT Bartering
+    # Alice wants to trade her CryptoPunk. She will accept a swap for Bob's Bored Ape.
+    intent2 = NftBarterIntent(
+        user="alice",
+        offer_nft="CryptoPunk#5678",
+        acceptance_conditions=[
+            {'type': 'price', 'token': 'WETH', 'amount': 50.0},
+            {'type': 'swap', 'nft': 'BoredApe#1234'}
+        ]
+    )
+    # NOTE: For this simple simulation, we don't have a buyer for the 50 WETH price,
+    # so the solver will find the swap condition.
+    MEMPOOL.append(intent2)
+    print("  - Alice published an NFT Barter intent.")
+
+    # Use Case 3: Private, Gasless Transaction
+    # Carol (who has no ETH) wants to send 100 USDC to Alice.
+    # She agrees to pay a fee of up to 1 USDC from the transfer amount.
+    intent3 = GaslessTransferIntent(
+        user="carol",
+        send_token="USDC",
+        send_amount=100.0,
+        recipient="alice",
+        max_fee_in_token=1.0
+    )
+    MEMPOOL.append(intent3)
+    print("  - Carol published a Gasless Transfer intent.\n")
+    
+    # --- 2. The Solver runs ---
+    # The solver will now scan the mempool and try to execute the intents.
+    run_solver(MEMPOOL)
+
+    # --- 3. Display the final results ---
+    print_ledger_state("Final Ledger State")
+    
+    print("✅ Simulation complete.")
+
+if __name__ == "__main__":
+    main()
